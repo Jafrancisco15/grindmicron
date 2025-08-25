@@ -38,14 +38,12 @@ function toGray(imgData){
   const {data, width, height} = imgData;
   const out = new Uint8ClampedArray(width*height);
   for(let i=0, j=0; i<data.length; i+=4, j++){
-    // perceptual luminance
     out[j] = (0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2])|0;
   }
   return {arr: out, width, height};
 }
 
 function thresholdAuto(gray, percent=55){
-  // simple percentile threshold
   const {arr, width, height} = gray;
   const hist = new Uint32Array(256);
   for(let v of arr) hist[v]++;
@@ -53,7 +51,7 @@ function thresholdAuto(gray, percent=55){
   let thr=128;
   for(let i=0;i<256;i++){ cum+=hist[i]; if(cum>=target){thr=i; break;} }
   const out = new Uint8ClampedArray(arr.length);
-  for(let i=0;i<arr.length;i++) out[i] = arr[i] < thr ? 255 : 0; // coffee dark -> white fg
+  for(let i=0;i<arr.length;i++) out[i] = arr[i] < thr ? 255 : 0;
   return {bin: out, width, height};
 }
 
@@ -100,7 +98,6 @@ function dilate(bin, w, h, r=1){
 }
 
 function connectedComponents(bin, w, h){
-  // 4-connected
   const labels = new Int32Array(w*h).fill(-1);
   const comps = [];
   let id=0;
@@ -109,7 +106,6 @@ function connectedComponents(bin, w, h){
     for(let x=0;x<w;x++){
       const idx = y*w+x;
       if(bin[idx]!==255 || labels[idx]!==-1) continue;
-      // flood fill
       let qx=[x], qy=[y], qi=0;
       labels[idx]=id;
       let area=0, minx=x, maxx=x, miny=y, maxy=y;
@@ -144,7 +140,6 @@ function percentile(arr, p){
 }
 
 function drawHistogram(values){
-  // draw in histCanvas (360x160)
   const w=histCanvas.width, h=histCanvas.height;
   hctx.clearRect(0,0,w,h);
   if(!values.length){ 
@@ -249,7 +244,6 @@ function enableSelection(canvas){
     const h = Math.round(Math.abs(start.y-end.y));
     if(w>10 && h>10){
       sel = {x,y,w,h};
-      // draw a subtle overlay to indicate ROI
       rctx.save();
       rctx.strokeStyle = "#ffd166";
       rctx.lineWidth = 2;
@@ -262,22 +256,19 @@ function enableSelection(canvas){
 // ===== Auto Calibration =====
 $("autoCalBtn").onclick = ()=>{
   if(!rulerCanvas.width){ alert("Sube una foto de la regla primero."); return; }
-  // Use ROI or center strip
   const roi = sel || {x: 0, y: Math.floor(rulerCanvas.height*0.2), w: rulerCanvas.width, h: Math.floor(rulerCanvas.height*0.6)};
   const img = rctx.getImageData(roi.x, roi.y, roi.w, roi.h);
   const gray = toGray(img);
   const thr = thresholdAuto(gray, 50);
-  // vertical projection (count white pixels -> lines)
   const sums = new Float32Array(roi.w);
   for(let x=0;x<roi.w;x++){
     let s=0;
     for(let y=0;y<roi.h;y++){
-      if(thr.bin[y*roi.w+x]===0) continue; // background
+      if(thr.bin[y*roi.w+x]===0) continue;
       s += 1;
     }
     sums[x]=s;
   }
-  // smooth
   const win=3;
   const smooth = new Float32Array(roi.w);
   for(let i=0;i<roi.w;i++){
@@ -288,7 +279,6 @@ $("autoCalBtn").onclick = ()=>{
     }
     smooth[i]=a/Math.max(c,1);
   }
-  // detect peaks
   const peaks=[];
   const thresh = (Math.max(...smooth))*0.5;
   for(let i=1;i<roi.w-1;i++){
@@ -300,12 +290,10 @@ $("autoCalBtn").onclick = ()=>{
     alert("No se detectaron suficientes marcas. Prueba seleccionar un área más clara o usa el modo Manual.");
     return;
   }
-  // compute spacings and take mode in the 3–50 px range (heuristic)
   const diffs=[];
   for(let i=1;i<peaks.length;i++){
     diffs.push(peaks[i]-peaks[i-1]);
   }
-  // histogram of diffs
   const hist = {};
   for(const d of diffs){
     if(d<3 || d>50) continue;
@@ -319,7 +307,7 @@ $("autoCalBtn").onclick = ()=>{
     alert("No pude estimar el espaciado de 1 mm automáticamente. Usa el modo Manual 0–1 cm.");
     return;
   }
-  pxPerMM = bestD; // espaciado típico entre marcas de 1 mm
+  pxPerMM = bestD;
   calibrationSource = `Auto (ROI ${roi.w}×${roi.h}px)`;
   updateCalUI();
 };
@@ -374,7 +362,6 @@ $("clearCalBtn").onclick = ()=>{
   updateCalUI();
 };
 
-// Load existing calibration on startup
 (function(){
   const saved = localStorage.getItem("grindCalV2");
   if(saved){
@@ -388,16 +375,13 @@ $("clearCalBtn").onclick = ()=>{
   }
 })();
 
-// UI for sliders
 $("thr").oninput = (e)=>{ $("thrVal").textContent = e.target.value; };
 $("sepa").oninput = (e)=>{ $("sepaVal").textContent = e.target.value; };
 $("minArea").oninput = (e)=>{ $("minAreaVal").textContent = e.target.value; };
 
-// ===== Analyze Grind =====
 $("analyzeBtn").onclick = ()=>{
   if(!grindCanvas.width){ alert("Sube la foto de la molienda."); return; }
   if(!pxPerMM){
-    // try to load saved
     const saved = localStorage.getItem("grindCalV2");
     if(saved){ 
       const j = JSON.parse(saved);
@@ -417,20 +401,16 @@ $("analyzeBtn").onclick = ()=>{
   const bw = thresholdAuto(gray, thrP);
   let bin = bw.bin;
 
-  // morphology: erode/dilate to separate clumps
   if(sepa>0){
     bin = erode(bin, bw.width, bw.height, sepa);
     bin = dilate(bin, bw.width, bw.height, sepa);
   }
 
-  // Connected components
   const {labels, comps} = connectedComponents(bin, bw.width, bw.height);
 
-  // Filter and compute diameters
   const diamMicrons = [];
-  const px2um = (1000/pxPerMM); // 1 mm = 1000 μm
+  const px2um = (1000/pxPerMM);
   const ctx = gctx;
-  // redraw original
   drawImageToCanvas(grindImg, grindCanvas, 900, 600);
 
   ctx.save();
@@ -442,11 +422,9 @@ $("analyzeBtn").onclick = ()=>{
   for(const c of comps){
     if(c.area < minArea) continue;
     keep++;
-    // equivalent circle diameter (pixels)
     const d_px = 2*Math.sqrt(c.area/Math.PI);
     const d_um = d_px * px2um;
     diamMicrons.push(d_um);
-    // draw bounding circle
     const cx = (c.minx + c.maxx)/2;
     const cy = (c.miny + c.maxy)/2;
     const r = d_px/2;
@@ -470,7 +448,6 @@ $("analyzeBtn").onclick = ()=>{
   $("count").textContent = keep;
 
   drawHistogram(diamMicrons);
-  // store last results for export
   window._lastDiameters = diamMicrons;
 };
 
