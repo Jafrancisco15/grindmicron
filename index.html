@@ -1,14 +1,118 @@
 <!doctype html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Grind → Microns</title>
-    <!-- OpenCV.js from official docs CDN; loads WebAssembly automatically -->
-    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-  </head>
-  <body class="bg-neutral-950 text-neutral-100">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grind → Micrones (v2)</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>Conversor de Molienda a Micrones • v2</h1>
+  <p class="subtitle">Calibra con tu regla (0–1 cm) y analiza una foto de molienda.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1) Calibración con regla</h2>
+    <div class="row">
+      <div class="uploader">
+        <label class="btn">
+          📏 Subir foto de la regla
+          <input type="file" id="rulerInput" accept="image/*" hidden>
+        </label>
+        <div id="rulerProgress" class="progress hidden">
+          <div class="bar" id="rulerBar"></div>
+        </div>
+        <div id="rulerInfo" class="info"></div>
+      </div>
+      <div class="tools">
+        <button id="autoCalBtn" class="btn">Auto-calibrar (detectar ticks)</button>
+        <button id="manualCalBtn" class="btn alt">Manual 0–1 cm (elige 2 puntos)</button>
+        <button id="saveCalBtn" class="btn green">Guardar calibración</button>
+        <button id="clearCalBtn" class="btn danger">Borrar calibración</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="canvasWrap">
+        <canvas id="rulerCanvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="kv">
+          <div>px por mm</div><div id="pxPerMM">—</div>
+        </div>
+        <div class="kv">
+          <div>mm por px</div><div id="mmPerPx">—</div>
+        </div>
+        <div class="kv">
+          <div>Origen</div><div id="calSource">—</div>
+        </div>
+        <div class="kv">
+          <div>Guardado</div><div id="calSaved">—</div>
+        </div>
+        <p class="hint">Sugerencia: encierra la zona de la regla con el ratón para enfocar
+        la detección. La auto‑calibración encuentra el espaciamiento entre marcas
+        de 1 mm en esa zona. Si falla, usa <b>Manual 0–1 cm</b> y haz click en el 0 y el 1.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2) Analizar molienda</h2>
+    <div class="row">
+      <div class="uploader">
+        <label class="btn">
+          ☕ Subir foto de molienda
+          <input type="file" id="grindInput" accept="image/*" hidden>
+        </label>
+        <div id="grindProgress" class="progress hidden">
+          <div class="bar" id="grindBar"></div>
+        </div>
+        <div id="grindInfo" class="info"></div>
+      </div>
+      <div class="tools">
+        <label class="inline">Umbral (%):
+          <input type="range" id="thr" min="10" max="90" value="55">
+          <span id="thrVal">55</span>
+        </label>
+        <label class="inline">Separación (px):
+          <input type="range" id="sepa" min="0" max="6" value="2">
+          <span id="sepaVal">2</span>
+        </label>
+        <label class="inline">Tamaño mínimo (px²):
+          <input type="range" id="minArea" min="5" max="500" value="40">
+          <span id="minAreaVal">40</span>
+        </label>
+        <button id="analyzeBtn" class="btn">Calcular</button>
+        <button id="exportCsvBtn" class="btn alt">Exportar CSV</button>
+        <button id="savePngBtn" class="btn alt">Descargar PNG con medidas</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="canvasWrap">
+        <canvas id="grindCanvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="kv"><div>D10 (μm)</div><div id="d10">—</div></div>
+        <div class="kv"><div>D50 (μm)</div><div id="d50">—</div></div>
+        <div class="kv"><div>D90 (μm)</div><div id="d90">—</div></div>
+        <div class="kv"><div>Media (μm)</div><div id="mean">—</div></div>
+        <div class="kv"><div>Conteo</div><div id="count">—</div></div>
+        <div class="histWrap">
+          <canvas id="histCanvas" width="360" height="160"></canvas>
+        </div>
+        <p class="hint">Para resultados precisos esparce la molienda como un <b>polvillo disperso</b>,
+        evita grumos, usa buena luz y enfoca bien.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <small>Hecho con ❤️ para Escuela de Café — Funciona offline, guarda la calibración en tu navegador.</small>
+</footer>
+
+<script src="app.js"></script>
+</body>
 </html>
