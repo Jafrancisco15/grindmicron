@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grind → Micrones (v2.1.1)</title>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<header>
+  <h1>Conversor de Molienda a Micrones • v2.1.1</h1>
+  <p class="subtitle">Zoom/Pan + ROIs. Tipografía Poppins y franja amarilla en todas las secciones.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1) Calibración con regla</h2>
+    <div class="row">
+      <div class="uploader">
+        <label class="btn">
+          📏 Subir foto de la regla
+          <input type="file" id="rulerInput" accept="image/*" hidden>
+        </label>
+        <div id="rulerProgress" class="progress hidden">
+          <div class="bar" id="rulerBar"></div>
+        </div>
+        <div id="rulerInfo" class="info"></div>
+      </div>
+      <div class="tools">
+        <button id="autoCalBtn" class="btn">Auto-calibrar (1 mm)</button>
+        <button id="manualCalBtn" class="btn alt">Manual 0–1 cm</button>
+        <button id="saveCalBtn" class="btn green">Guardar</button>
+        <button id="clearCalBtn" class="btn danger">Borrar</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="canvasWrap">
+        <canvas id="rulerCanvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="kv"><div>px / mm</div><div id="pxPerMM">—</div></div>
+        <div class="kv"><div>mm / px</div><div id="mmPerPx">—</div></div>
+        <div class="kv"><div>Origen</div><div id="calSource">—</div></div>
+        <div class="kv"><div>Guardado</div><div id="calSaved">—</div></div>
+        <p class="hint">Selecciona un área de la regla (ROI), usa Auto o Manual (clic en 0 y 1 cm).</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2) Analizar molienda</h2>
+    <div class="row">
+      <div class="uploader">
+        <label class="btn">
+          ☕ Subir foto de molienda
+          <input type="file" id="grindInput" accept="image/*" hidden>
+        </label>
+        <div id="grindProgress" class="progress hidden">
+          <div class="bar" id="grindBar"></div>
+        </div>
+        <div id="grindInfo" class="info"></div>
+      </div>
+      <div class="tools">
+        <label class="inline">Método:
+          <select id="thrMethod">
+            <option value="pct">Percentil</option>
+            <option value="otsu">Otsu</option>
+          </select>
+        </label>
+        <label class="inline">Umbral (%):
+          <input type="range" id="thr" min="10" max="90" value="55">
+          <span id="thrVal">55</span>
+        </label>
+        <label class="inline">Separación (px):
+          <input type="range" id="sepa" min="0" max="8" value="2">
+          <span id="sepaVal">2</span>
+        </label>
+        <label class="inline">Tamaño mínimo (px²):
+          <input type="range" id="minArea" min="5" max="800" value="40">
+          <span id="minAreaVal">40</span>
+        </label>
+        <label class="inline"><input type="checkbox" id="ignoreEdges" checked> Ignorar objetos en borde</label>
+        <button id="analyzeBtn" class="btn">Calcular</button>
+        <button id="exportCsvBtn" class="btn alt">Exportar CSV</button>
+        <button id="savePngBtn" class="btn alt">Descargar PNG</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="canvasWrap" id="grindWrap">
+        <div class="toolbar">
+          <button id="enableNav" class="btn small">🖱️ Zoom/Pan</button>
+          <button id="addRoi" class="btn small">➕ Nueva área</button>
+          <button id="clearRois" class="btn small danger">🗑️ Limpiar áreas</button>
+          <button id="resetView" class="btn small alt">⟳ Reset vista</button>
+        </div>
+        <canvas id="grindCanvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="kv"><div>D10 (μm)</div><div id="d10">—</div></div>
+        <div class="kv"><div>D50 (μm)</div><div id="d50">—</div></div>
+        <div class="kv"><div>D90 (μm)</div><div id="d90">—</div></div>
+        <div class="kv"><div>Media (μm)</div><div id="mean">—</div></div>
+        <div class="kv"><div>Conteo</div><div id="count">—</div></div>
+        <div class="kv"><div>Áreas (ROI)</div><div id="roiInfo">—</div></div>
+        <div class="histWrap">
+          <canvas id="histCanvas" width="360" height="160"></canvas>
+        </div>
+        <p class="hint">Dibuja uno o varios ROIs. Usa rueda para zoom y arrastra para pan (modo Zoom/Pan activado).</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <small>Hecho con ❤️ para Escuela de Café — v2.1.1</small>
+</footer>
+
+<script src="./app.js"></script>
+</body>
+</html>
