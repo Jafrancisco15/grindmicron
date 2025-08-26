@@ -7,7 +7,50 @@ type Props = {
 
 export default function CalibrationCanvas({ onCalibrated }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const [scale, setScale] = useState(1);
+  const [offset, setOffset] = useState({x:0, y:0});
+  const [isPanning, setIsPanning] = useState(false);
+  const panRef = useRef<{x:number,y:number}|null>(null);
+
+  function viewToImage(pt:{x:number,y:number}){
+    const x = (pt.x - offset.x)/scale;
+    const y = (pt.y - offset.y)/scale;
+    return {x,y};
+  }
+  function imageToView(pt:{x:number,y:number}){
+    return {x: pt.x*scale + offset.x, y: pt.y*scale + offset.y};
+  }
+
+  function onWheel(e: React.WheelEvent<HTMLCanvasElement>) {
+    if (!canvasRef.current) return;
+    e.preventDefault();
+    const rect = (overlayRef.current ?? canvasRef.current).getBoundingClientRect();
+    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
+    const before = viewToImage(mouse);
+    const dir = Math.sign(e.deltaY) > 0 ? -1 : 1;
+    const factor = 1 + 0.15 * dir;
+    const newScale = Math.min(12, Math.max(0.2, scale * factor));
+    setScale(newScale);
+    const after = {x: before.x * newScale, y: before.y * newScale};
+    setOffset({x: mouse.x - after.x, y: mouse.y - after.y});
+  }
+  function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>){
+    const rect = (overlayRef.current ?? canvasRef.current).getBoundingClientRect();
+    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
+    setIsPanning(true);
+    panRef.current = {x: mouse.x - offset.x, y: mouse.y - offset.y};
+  }
+  function onMouseMove(e: React.MouseEvent<HTMLCanvasElement>){
+    if (!isPanning || !panRef.current) return;
+    const rect = (overlayRef.current ?? canvasRef.current).getBoundingClientRect();
+    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
+    setOffset({x: mouse.x - panRef.current.x, y: mouse.y - panRef.current.y});
+  }
+  function onMouseUp(){ setIsPanning(false); panRef.current = null; }
+  function resetView(){ setScale(1); setOffset({x:0,y:0}); }
+const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [pts, setPts] = useState<{x:number,y:number}[]>([]);
   const [mm, setMM] = useState<number>(10);
   const [name, setName] = useState<string>("Regla #1");
@@ -89,15 +132,35 @@ export default function CalibrationCanvas({ onCalibrated }: Props) {
     alert(`Calibración guardada. ${micronsPerPixel.toFixed(2)} μm/px`);
   }
 
-  return (
+  
+  function onOverlayClick(e: React.MouseEvent<HTMLCanvasElement>){
+    if (!overlayRef.current) return;
+    const rect = overlayRef.current.getBoundingClientRect();
+    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
+    const imgPt = viewToImage(mouse);
+    setPts(prev => {
+      const next = [...prev, {x: imgPt.x, y: imgPt.y}];
+      if (next.length > 2) return next.slice(-2);
+      return next;
+    });
+  }
+return (
     <div className="space-y-4">
       <div className="card">
         <div className="flex flex-col md:flex-row gap-4 items-start">
           <div className="flex-1">
             <label className="label">Sube una foto de una regla (misma distancia y zoom que usarás para la molienda)</label>
             <input type="file" accept="image/*" onChange={onFileChange} className="input w-full"/>
+<div className="flex gap-2 mt-2">
+  <button className="btn btn-secondary" onClick={resetView}>Reiniciar vista</button>
+  <span className="text-xs text-neutral-400 self-center">Usa rueda del mouse para zoom, arrastra para pan</span>
+</div>
             <p className="mt-2 text-sm text-neutral-400">Haz clic en dos marcas conocidas (por ejemplo, 0 cm y 1 cm), luego introduce la distancia real.</p>
-            <canvas ref={canvasRef} className="mt-3 w-full rounded-xl border border-white/10" onClick={onClick}/>
+            <div className="relative mt-3 w-full rounded-xl">
+  <canvas ref={canvasRef} onWheel={onWheel} className="w-full rounded-xl border border-white/10" />
+  <canvas ref={overlayRef} onWheel={onWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
+          className="absolute inset-0 w-full h-full pointer-events-auto" onClick={onOverlayClick} />
+</div>
           </div>
           <div className="w-full md:w-80 card-2">
             <div className="space-y-3">
