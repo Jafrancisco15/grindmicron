@@ -19,7 +19,12 @@ export default function CalibrationCanvas({ onCalibrated }: Props) {
   const [exifInfo, setExifInfo] = useState<any>(null);
   const [autoMicron, setAutoMicron] = useState<number | null>(null);
   const brands = listBrands();
-  const models = listModels(brand);
+  const [search, setSearch] = useState<string>('');
+  let models = listModels(brand);
+  if (search.trim().length>0) {
+    const q = search.trim().toLowerCase();
+    models = models.filter(m => (brand+' '+m.model).toLowerCase().includes(q) || m.model.toLowerCase().includes(q));
+  }
   const selected = models[modelIdx] ?? null;
   const lens = selected?.lenses?.[lensIdx] ?? null;
 const [img, setImg] = useState<HTMLImageElement | null>(null);
@@ -164,7 +169,7 @@ return (
             <div className="text-xs text-neutral-400 mt-1">Si EXIF no está disponible, puedes elegir teléfono y lente y estimar con una <b>distancia</b>.</div>
           </div>
           <div>
-            <div className="label mb-1">Marca y modelo</div>
+            <div className="label mb-1">Marca y modelo</div>\n            <input className=\"input w-full mb-2\" placeholder=\"Buscar modelo...\" value={search} onChange={e=>setSearch(e.target.value)} />
             <div className="flex gap-2">
               <select className="input w-1/2" value={brand} onChange={e=>{setBrand(e.target.value); setModelIdx(0); setLensIdx(0);}}>
                 {brands.map(b => <option key={b} value={b}>{b}</option>)}
