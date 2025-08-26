@@ -1,0 +1,495 @@
+// Helpers
+const $ = (id) => document.getElementById(id);
+
+const rulerCanvas = $("rulerCanvas");
+const grindCanvas = $("grindCanvas");
+const histCanvas = $("histCanvas");
+const rctx = rulerCanvas.getContext("2d");
+const gctx = grindCanvas.getContext("2d");
+const hctx = histCanvas.getContext("2d");
+
+let rulerImg = null;
+let grindImg = null;
+let pxPerMM = null;
+let calibrationSource = "—";
+
+function fmtBytes(n){
+  if(!n && n!==0) return "—";
+  const k=1024, sizes=["B","KB","MB","GB"];
+  const i = Math.floor(Math.log(n)/Math.log(k));
+  return (n/Math.pow(k,i)).toFixed(1)+" "+sizes[i];
+}
+
+function drawImageToCanvas(img, canvas, maxW=900, maxH=420){
+  const ratio = Math.min(maxW/img.width, maxH/img.height, 1);
+  canvas.width = Math.round(img.width * ratio);
+  canvas.height = Math.round(img.height * ratio);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+}
+
+function getImageData(canvas){
+  const ctx = canvas.getContext("2d");
+  return ctx.getImageData(0,0,canvas.width,canvas.height);
+}
+
+function toGray(imgData){
+  const {data, width, height} = imgData;
+  const out = new Uint8ClampedArray(width*height);
+  for(let i=0, j=0; i<data.length; i+=4, j++){
+    // perceptual luminance
+    out[j] = (0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2])|0;
+  }
+  return {arr: out, width, height};
+}
+
+function thresholdAuto(gray, percent=55){
+  // simple percentile threshold
+  const {arr, width, height} = gray;
+  const hist = new Uint32Array(256);
+  for(let v of arr) hist[v]++;
+  let cum=0, total = width*height, target = total*(percent/100);
+  let thr=128;
+  for(let i=0;i<256;i++){ cum+=hist[i]; if(cum>=target){thr=i; break;} }
+  const out = new Uint8ClampedArray(arr.length);
+  for(let i=0;i<arr.length;i++) out[i] = arr[i] < thr ? 255 : 0; // coffee dark -> white fg
+  return {bin: out, width, height};
+}
+
+function erode(bin, w, h, r=1){
+  if(r<=0) return bin.slice();
+  const out = new Uint8ClampedArray(bin.length);
+  const rr = r|0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let ok=255;
+      for(let dy=-rr; dy<=rr; dy++){
+        for(let dx=-rr; dx<=rr; dx++){
+          const nx=x+dx, ny=y+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h){ok=0;break;}
+          if(bin[ny*w+nx]===0){ok=0;break;}
+        }
+        if(ok===0) break;
+      }
+      out[y*w+x] = ok?255:0;
+    }
+  }
+  return out;
+}
+
+function dilate(bin, w, h, r=1){
+  if(r<=0) return bin.slice();
+  const out = new Uint8ClampedArray(bin.length);
+  const rr = r|0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let on=0;
+      for(let dy=-rr; dy<=rr; dy++){
+        for(let dx=-rr; dx<=rr; dx++){
+          const nx=x+dx, ny=y+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h) continue;
+          if(bin[ny*w+nx]===255){on=1;break;}
+        }
+        if(on) break;
+      }
+      out[y*w+x] = on?255:0;
+    }
+  }
+  return out;
+}
+
+function connectedComponents(bin, w, h){
+  // 4-connected
+  const labels = new Int32Array(w*h).fill(-1);
+  const comps = [];
+  let id=0;
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const idx = y*w+x;
+      if(bin[idx]!==255 || labels[idx]!==-1) continue;
+      // flood fill
+      let qx=[x], qy=[y], qi=0;
+      labels[idx]=id;
+      let area=0, minx=x, maxx=x, miny=y, maxy=y;
+      while(qi<qx.length){
+        const cx=qx[qi], cy=qy[qi]; qi++;
+        area++;
+        minx=Math.min(minx,cx); maxx=Math.max(maxx,cx);
+        miny=Math.min(miny,cy); maxy=Math.max(maxy,cy);
+        for(const [dx,dy] of dirs){
+          const nx=cx+dx, ny=cy+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h) continue;
+          const nidx=ny*w+nx;
+          if(bin[nidx]===255 && labels[nidx]===-1){
+            labels[nidx]=id;
+            qx.push(nx); qy.push(ny);
+          }
+        }
+      }
+      comps.push({id, area, minx, miny, maxx, maxy});
+      id++;
+    }
+  }
+  return {labels, comps};
+}
+
+function percentile(arr, p){
+  if(arr.length===0) return NaN;
+  const i = (arr.length-1)*(p/100);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  if (lo===hi) return arr[lo];
+  return arr[lo] + (arr[hi]-arr[lo])*(i-lo);
+}
+
+function drawHistogram(values){
+  // draw in histCanvas (360x160)
+  const w=histCanvas.width, h=histCanvas.height;
+  hctx.clearRect(0,0,w,h);
+  if(!values.length){ 
+    hctx.fillStyle="#567";
+    hctx.fillText("Sin datos…",10,20);
+    return;
+  }
+  const bins = 30;
+  const min = Math.min(...values), max = Math.max(...values);
+  const bw = w/bins;
+  const counts = new Array(bins).fill(0);
+  const range = (max-min)||1;
+  values.forEach(v=>{
+    let b = Math.floor((v-min)/range*bins);
+    if(b>=bins) b=bins-1;
+    counts[b]++;
+  });
+  const maxC = Math.max(...counts)||1;
+  hctx.fillStyle="#2b90d9";
+  for(let i=0;i<bins;i++){
+    const ch = (counts[i]/maxC)*(h-20);
+    hctx.fillRect(i*bw, h-ch, bw-1, ch);
+  }
+  hctx.fillStyle="#9fb3c8";
+  hctx.fillText(`min ${min.toFixed(0)}μm  max ${max.toFixed(0)}μm`, 8, 14);
+}
+
+// ===== File Upload Progress =====
+function hookFileInput(inputEl, infoEl, progressEl, barEl, onImageLoaded){
+  inputEl.addEventListener("change", (e)=>{
+    const f = inputEl.files?.[0];
+    if(!f) return;
+    infoEl.textContent = `${f.name} • ${fmtBytes(f.size)}`;
+    progressEl.classList.remove("hidden");
+    barEl.style.width = "0%";
+    const fr = new FileReader();
+    fr.onprogress = (ev)=>{
+      if(ev.lengthComputable){
+        const pct = (ev.loaded/ev.total)*100;
+        barEl.style.width = `${pct}%`;
+      }
+    };
+    fr.onload = ()=>{
+      barEl.style.width = "100%";
+      setTimeout(()=>progressEl.classList.add("hidden"), 400);
+      const img = new Image();
+      img.onload = ()=>{
+        onImageLoaded(img);
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(f);
+  });
+}
+
+hookFileInput($("rulerInput"), $("rulerInfo"), $("rulerProgress"), $("rulerBar"), (img)=>{
+  rulerImg = img;
+  drawImageToCanvas(img, rulerCanvas);
+  enableSelection(rulerCanvas);
+});
+
+hookFileInput($("grindInput"), $("grindInfo"), $("grindProgress"), $("grindBar"), (img)=>{
+  grindImg = img;
+  drawImageToCanvas(img, grindCanvas, 900, 600);
+});
+
+// ===== ROI selection for ruler =====
+let sel = null;
+let selecting = false;
+function enableSelection(canvas){
+  sel = null;
+  const rectEl = document.createElement("div");
+  rectEl.className = "selectRect";
+  canvas.parentElement.appendChild(rectEl);
+  function setRect(a,b){
+    const x = Math.min(a.x,b.x), y = Math.min(a.y,b.y);
+    const w = Math.abs(a.x-b.x), h = Math.abs(a.y-b.y);
+    rectEl.style.left = (canvas.offsetLeft + x + 8) + "px";
+    rectEl.style.top = (canvas.offsetTop + y + 8) + "px";
+    rectEl.style.width = w + "px";
+    rectEl.style.height = h + "px";
+  }
+  let start=null;
+  canvas.onmousedown = (ev)=>{
+    const bb = canvas.getBoundingClientRect();
+    start = {x: ev.clientX - bb.left, y: ev.clientY - bb.top};
+    selecting = true;
+  };
+  canvas.onmousemove = (ev)=>{
+    if(!selecting) return;
+    const bb = canvas.getBoundingClientRect();
+    const cur = {x: ev.clientX - bb.left, y: ev.clientY - bb.top};
+    setRect(start, cur);
+  };
+  canvas.onmouseup = (ev)=>{
+    selecting=false;
+    const bb = canvas.getBoundingClientRect();
+    const end = {x: ev.clientX - bb.left, y: ev.clientY - bb.top};
+    const x = Math.round(Math.min(start.x,end.x));
+    const y = Math.round(Math.min(start.y,end.y));
+    const w = Math.round(Math.abs(start.x-end.x));
+    const h = Math.round(Math.abs(start.y-end.y));
+    if(w>10 && h>10){
+      sel = {x,y,w,h};
+      // draw a subtle overlay to indicate ROI
+      rctx.save();
+      rctx.strokeStyle = "#ffd166";
+      rctx.lineWidth = 2;
+      rctx.strokeRect(x,y,w,h);
+      rctx.restore();
+    }
+  };
+}
+
+// ===== Auto Calibration =====
+$("autoCalBtn").onclick = ()=>{
+  if(!rulerCanvas.width){ alert("Sube una foto de la regla primero."); return; }
+  // Use ROI or center strip
+  const roi = sel || {x: 0, y: Math.floor(rulerCanvas.height*0.2), w: rulerCanvas.width, h: Math.floor(rulerCanvas.height*0.6)};
+  const img = rctx.getImageData(roi.x, roi.y, roi.w, roi.h);
+  const gray = toGray(img);
+  const thr = thresholdAuto(gray, 50);
+  // vertical projection (count white pixels -> lines)
+  const sums = new Float32Array(roi.w);
+  for(let x=0;x<roi.w;x++){
+    let s=0;
+    for(let y=0;y<roi.h;y++){
+      if(thr.bin[y*roi.w+x]===0) continue; // background
+      s += 1;
+    }
+    sums[x]=s;
+  }
+  // smooth
+  const win=3;
+  const smooth = new Float32Array(roi.w);
+  for(let i=0;i<roi.w;i++){
+    let a=0,c=0;
+    for(let k=-win;k<=win;k++){
+      const j=i+k; if(j<0||j>=roi.w) continue;
+      a+=sums[j]; c++;
+    }
+    smooth[i]=a/Math.max(c,1);
+  }
+  // detect peaks
+  const peaks=[];
+  const thresh = (Math.max(...smooth))*0.5;
+  for(let i=1;i<roi.w-1;i++){
+    if(smooth[i]>thresh && smooth[i]>smooth[i-1] && smooth[i]>smooth[i+1]){
+      peaks.push(i);
+    }
+  }
+  if(peaks.length<5){
+    alert("No se detectaron suficientes marcas. Prueba seleccionar un área más clara o usa el modo Manual.");
+    return;
+  }
+  // compute spacings and take mode in the 3–50 px range (heuristic)
+  const diffs=[];
+  for(let i=1;i<peaks.length;i++){
+    diffs.push(peaks[i]-peaks[i-1]);
+  }
+  // histogram of diffs
+  const hist = {};
+  for(const d of diffs){
+    if(d<3 || d>50) continue;
+    hist[d]=(hist[d]||0)+1;
+  }
+  let bestD=null, bestC=0;
+  for(const k in hist){
+    if(hist[k]>bestC){ bestC=hist[k]; bestD=Number(k); }
+  }
+  if(!bestD){
+    alert("No pude estimar el espaciado de 1 mm automáticamente. Usa el modo Manual 0–1 cm.");
+    return;
+  }
+  pxPerMM = bestD; // espaciado típico entre marcas de 1 mm
+  calibrationSource = `Auto (ROI ${roi.w}×${roi.h}px)`;
+  updateCalUI();
+};
+
+// ===== Manual Calibration (two clicks for 0–1 cm) =====
+let manualMode = false;
+$("manualCalBtn").onclick = ()=>{
+  if(!rulerCanvas.width){ alert("Sube una foto de la regla primero."); return; }
+  manualMode = true;
+  alert("Haz click en el punto del 0 y luego en el del 1 cm.");
+};
+
+rulerCanvas.addEventListener("click",(ev)=>{
+  if(!manualMode) return;
+  const bb = rulerCanvas.getBoundingClientRect();
+  const x = ev.clientX - bb.left;
+  const y = ev.clientY - bb.top;
+  if(!window._mpts) window._mpts = [];
+  window._mpts.push({x,y});
+  rctx.fillStyle="#19a974";
+  rctx.beginPath();
+  rctx.arc(x,y,4,0,Math.PI*2);
+  rctx.fill();
+  if(window._mpts.length===2){
+    const a = window._mpts[0], b = window._mpts[1];
+    const dist = Math.hypot(b.x-a.x, b.y-a.y);
+    pxPerMM = dist/10.0;
+    calibrationSource = "Manual 0–1 cm";
+    manualMode = false;
+    window._mpts = [];
+    updateCalUI();
+  }
+});
+
+function updateCalUI(){
+  $("pxPerMM").textContent = pxPerMM ? pxPerMM.toFixed(3) : "—";
+  $("mmPerPx").textContent = pxPerMM ? (1/pxPerMM).toFixed(5) : "—";
+  $("calSource").textContent = calibrationSource;
+}
+
+$("saveCalBtn").onclick = ()=>{
+  if(!pxPerMM){ alert("Aún no hay calibración."); return; }
+  const payload = { pxPerMM, source: calibrationSource, at: new Date().toISOString() };
+  localStorage.setItem("grindCalV2", JSON.stringify(payload));
+  $("calSaved").textContent = new Date(payload.at).toLocaleString();
+};
+
+$("clearCalBtn").onclick = ()=>{
+  localStorage.removeItem("grindCalV2");
+  $("calSaved").textContent = "—";
+  pxPerMM = null;
+  updateCalUI();
+};
+
+// Load existing calibration on startup
+(function(){
+  const saved = localStorage.getItem("grindCalV2");
+  if(saved){
+    try{
+      const j = JSON.parse(saved);
+      pxPerMM = j.pxPerMM;
+      calibrationSource = j.source || "Guardado";
+      $("calSaved").textContent = new Date(j.at).toLocaleString();
+      updateCalUI();
+    }catch(e){}
+  }
+})();
+
+// UI for sliders
+$("thr").oninput = (e)=>{ $("thrVal").textContent = e.target.value; };
+$("sepa").oninput = (e)=>{ $("sepaVal").textContent = e.target.value; };
+$("minArea").oninput = (e)=>{ $("minAreaVal").textContent = e.target.value; };
+
+// ===== Analyze Grind =====
+$("analyzeBtn").onclick = ()=>{
+  if(!grindCanvas.width){ alert("Sube la foto de la molienda."); return; }
+  if(!pxPerMM){
+    // try to load saved
+    const saved = localStorage.getItem("grindCalV2");
+    if(saved){ 
+      const j = JSON.parse(saved);
+      pxPerMM = j.pxPerMM; calibrationSource = j.source||"Guardado";
+      $("calSaved").textContent = new Date(j.at).toLocaleString();
+      updateCalUI();
+    }
+  }
+  if(!pxPerMM){ alert("Falta la calibración. Hazla en el paso 1."); return; }
+
+  const thrP = Number($("thr").value);
+  const sepa = Number($("sepa").value);
+  const minArea = Number($("minArea").value);
+
+  const img = getImageData(grindCanvas);
+  const gray = toGray(img);
+  const bw = thresholdAuto(gray, thrP);
+  let bin = bw.bin;
+
+  // morphology: erode/dilate to separate clumps
+  if(sepa>0){
+    bin = erode(bin, bw.width, bw.height, sepa);
+    bin = dilate(bin, bw.width, bw.height, sepa);
+  }
+
+  // Connected components
+  const {labels, comps} = connectedComponents(bin, bw.width, bw.height);
+
+  // Filter and compute diameters
+  const diamMicrons = [];
+  const px2um = (1000/pxPerMM); // 1 mm = 1000 μm
+  const ctx = gctx;
+  // redraw original
+  drawImageToCanvas(grindImg, grindCanvas, 900, 600);
+
+  ctx.save();
+  ctx.strokeStyle = "#ffd166";
+  ctx.lineWidth = 1.5;
+  ctx.fillStyle = "rgba(255,209,102,0.15)";
+
+  let keep=0;
+  for(const c of comps){
+    if(c.area < minArea) continue;
+    keep++;
+    // equivalent circle diameter (pixels)
+    const d_px = 2*Math.sqrt(c.area/Math.PI);
+    const d_um = d_px * px2um;
+    diamMicrons.push(d_um);
+    // draw bounding circle
+    const cx = (c.minx + c.maxx)/2;
+    const cy = (c.miny + c.maxy)/2;
+    const r = d_px/2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r, r, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  diamMicrons.sort((a,b)=>a-b);
+  const d10 = percentile(diamMicrons,10);
+  const d50 = percentile(diamMicrons,50);
+  const d90 = percentile(diamMicrons,90);
+  const mean = diamMicrons.reduce((a,b)=>a+b,0)/Math.max(diamMicrons.length,1);
+
+  $("d10").textContent = isFinite(d10)? d10.toFixed(0):"—";
+  $("d50").textContent = isFinite(d50)? d50.toFixed(0):"—";
+  $("d90").textContent = isFinite(d90)? d90.toFixed(0):"—";
+  $("mean").textContent = isFinite(mean)? mean.toFixed(0):"—";
+  $("count").textContent = keep;
+
+  drawHistogram(diamMicrons);
+  // store last results for export
+  window._lastDiameters = diamMicrons;
+};
+
+$("exportCsvBtn").onclick = ()=>{
+  if(!window._lastDiameters?.length){ alert("No hay resultados que exportar."); return; }
+  const rows = ["diameter_um"];
+  window._lastDiameters.forEach(v=>rows.push(v.toFixed(2)));
+  const blob = new Blob([rows.join("\n")], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "grind_diameters_um.csv";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+};
+
+$("savePngBtn").onclick = ()=>{
+  if(!grindCanvas.width){ alert("Sube la foto y calcula primero."); return; }
+  const a = document.createElement("a");
+  a.href = grindCanvas.toDataURL("image/png");
+  a.download = "grind_annotated.png";
+  a.click();
+};

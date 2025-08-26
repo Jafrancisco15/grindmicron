@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grind → Micrones (v2.1)</title>
+  <style>*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;margin:0;background:#0f1115;color:#eee}
+header{padding:16px 20px;border-bottom:1px solid #222;background:#111}
+h1{margin:0 0 4px;font-size:20px}
+.subtitle{margin:0;color:#bbb}
+main{max-width:1200px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+.card{background:#141821;border:1px solid #222;border-radius:14px;padding:14px}
+.card h2{margin-top:0;background:#1f2632;padding:10px 12px;border-radius:10px;display:inline-block}
+.row{display:flex;gap:16px;flex-wrap:wrap}
+.canvasWrap{flex:2;min-width:360px;background:#0c0f14;border:1px dashed #333;border-radius:12px;position:relative;padding:8px}
+canvas{max-width:100%;display:block;border-radius:8px;background:#0a0d11}
+.panel{flex:1;min-width:280px;background:#0c0f14;border:1px solid #222;border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:8px;padding:6px 8px;border-bottom:1px solid #1a1f29}
+.kv:last-child{border-bottom:0}
+.hint{color:#9fb3c8;font-size:12px;margin-top:8px}
+.btn{background:#2962ff;color:#fff;border:0;padding:10px 14px;border-radius:10px;cursor:pointer;display:inline-flex;gap:8px;align-items:center;box-shadow:0 3px 0 #123}
+.btn.alt{background:#2f394a}
+.btn.green{background:#19a974}
+.btn.danger{background:#d9534f}
+.btn.small{font-size:12px;padding:6px 10px}
+.btn:active{transform:translateY(1px)}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.uploader{display:flex;flex-direction:column;gap:8px}
+.info{font-size:12px;color:#9fb3c8}
+.inline{display:flex;gap:6px;align-items:center;background:#1b2230;padding:6px 8px;border-radius:8px}
+.progress{width:280px;height:10px;background:#1f2632;border-radius:20px;overflow:hidden;border:1px solid #2a3342}
+.progress .bar{height:100%;background:#ffd166;width:0%}
+.hidden{display:none}
+.histWrap{margin-top:8px;border:1px solid #1a1f29;border-radius:8px;overflow:hidden;background:#0a0d11}
+footer{padding:16px;text-align:center;color:#99a3b5}
+.selectRect{position:absolute;border:2px dashed #ffd166;pointer-events:none}
+.toolbar{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:2}
+.roi{position:absolute;border:2px solid #ffd166;background:rgba(255,209,102,0.08);pointer-events:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Conversor de Molienda a Micrones • v2.1</h1>
+  <p class="subtitle">Ahora con zoom, pan y selección de áreas (ROI) para análisis preciso.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1) Calibración con regla</h2>
+    <div class="row">
+      <div class="uploader">
+        <label class="btn">
+          📏 Subir foto de la regla
+          <input type="file" id="rulerInput" accept="image/*" hidden>
+        </label>
+        <div id="rulerProgress" class="progress hidden">
+          <div class="bar" id="rulerBar"></div>
+        </div>
+        <div id="rulerInfo" class="info"></div>
+      </div>
+      <div class="tools">
+        <button id="autoCalBtn" class="btn">Auto-calibrar (1 mm)</button>
+        <button id="manualCalBtn" class="btn alt">Manual 0–1 cm</button>
+        <button id="saveCalBtn" class="btn green">Guardar</button>
+        <button id="clearCalBtn" class="btn danger">Borrar</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="canvasWrap">
+        <canvas id="rulerCanvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="kv"><div>px / mm</div><div id="pxPerMM">—</div></div>
+        <div class="kv"><div>mm / px</div><div id="mmPerPx">—</div></div>
+        <div class="kv"><div>Origen</div><div id="calSource">—</div></div>
+        <div class="kv"><div>Guardado</div><div id="calSaved">—</div></div>
+        <p class="hint">Selecciona un área de la regla (ROI), usa Auto o Manual (clic en 0 y 1 cm).</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2) Analizar molienda</h2>
+    <div class="row">
+      <div class="uploader">
+        <label class="btn">
+          ☕ Subir foto de molienda
+          <input type="file" id="grindInput" accept="image/*" hidden>
+        </label>
+        <div id="grindProgress" class="progress hidden">
+          <div class="bar" id="grindBar"></div>
+        </div>
+        <div id="grindInfo" class="info"></div>
+      </div>
+      <div class="tools">
+        <label class="inline">Método:
+          <select id="thrMethod">
+            <option value="pct">Percentil</option>
+            <option value="otsu">Otsu</option>
+          </select>
+        </label>
+        <label class="inline">Umbral (%):
+          <input type="range" id="thr" min="10" max="90" value="55">
+          <span id="thrVal">55</span>
+        </label>
+        <label class="inline">Separación (px):
+          <input type="range" id="sepa" min="0" max="8" value="2">
+          <span id="sepaVal">2</span>
+        </label>
+        <label class="inline">Tamaño mínimo (px²):
+          <input type="range" id="minArea" min="5" max="800" value="40">
+          <span id="minAreaVal">40</span>
+        </label>
+        <label class="inline"><input type="checkbox" id="ignoreEdges" checked> Ignorar objetos en borde</label>
+        <button id="analyzeBtn" class="btn">Calcular</button>
+        <button id="exportCsvBtn" class="btn alt">Exportar CSV</button>
+        <button id="savePngBtn" class="btn alt">Descargar PNG</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="canvasWrap" id="grindWrap">
+        <div class="toolbar">
+          <button id="enableNav" class="btn small">🖱️ Zoom/Pan</button>
+          <button id="addRoi" class="btn small">➕ Nueva área</button>
+          <button id="clearRois" class="btn small danger">🗑️ Limpiar áreas</button>
+          <button id="resetView" class="btn small alt">⟳ Reset vista</button>
+        </div>
+        <canvas id="grindCanvas"></canvas>
+      </div>
+      <div class="panel">
+        <div class="kv"><div>D10 (μm)</div><div id="d10">—</div></div>
+        <div class="kv"><div>D50 (μm)</div><div id="d50">—</div></div>
+        <div class="kv"><div>D90 (μm)</div><div id="d90">—</div></div>
+        <div class="kv"><div>Media (μm)</div><div id="mean">—</div></div>
+        <div class="kv"><div>Conteo</div><div id="count">—</div></div>
+        <div class="kv"><div>Áreas (ROI)</div><div id="roiInfo">—</div></div>
+        <div class="histWrap">
+          <canvas id="histCanvas" width="360" height="160"></canvas>
+        </div>
+        <p class="hint">Dibuja uno o varios <b>ROIs</b> sobre zonas con partículas. Usa rueda para zoom y arrastre para pan (modo Zoom/Pan activado).</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <small>Hecho con ❤️ para Escuela de Café — v2.1</small>
+</footer>
+
+<script>// ===== Shortcuts =====
+const $ = (id) => document.getElementById(id);
+
+// ===== Canvases =====
+const rulerCanvas = $("rulerCanvas");
+const grindCanvas = $("grindCanvas");
+const histCanvas = $("histCanvas");
+const rctx = rulerCanvas.getContext("2d");
+const gctx = grindCanvas.getContext("2d");
+const hctx = histCanvas.getContext("2d");
+
+// Offscreen base for grind (no transforms)
+const baseCanvas = document.createElement("canvas");
+const bctx = baseCanvas.getContext("2d");
+
+let rulerImg = null;
+let grindImg = null;
+let pxPerMM = null;
+let calibrationSource = "—";
+
+// ===== Utilities =====
+function fmtBytes(n){
+  if(!n && n!==0) return "—";
+  const k=1024, sizes=["B","KB","MB","GB"];
+  const i = Math.floor(Math.log(n)/Math.log(k));
+  return (n/Math.pow(k,i)).toFixed(1)+" "+sizes[i];
+}
+
+function drawImageToCanvas(img, canvas, maxW=1000, maxH=700){
+  const ratio = Math.min(maxW/img.width, maxH/img.height, 1);
+  canvas.width = Math.round(img.width * ratio);
+  canvas.height = Math.round(img.height * ratio);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+}
+
+function toGray(imgData, channel="lum"){
+  const {data, width, height} = imgData;
+  const out = new Uint8ClampedArray(width*height);
+  for(let i=0, j=0; i<data.length; i+=4, j++){
+    let v;
+    if(channel==="r") v = data[i];
+    else if(channel==="g") v = data[i+1];
+    else if(channel==="b") v = data[i+2];
+    else v = (0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2]);
+    out[j] = v|0;
+  }
+  return {arr: out, width, height};
+}
+
+function thresholdPercentile(gray, percent=55, invert=true){
+  const {arr, width, height} = gray;
+  const hist = new Uint32Array(256);
+  for(let v of arr) hist[v]++;
+  let cum=0, total = width*height, target = total*(percent/100);
+  let thr=128;
+  for(let i=0;i<256;i++){ cum+=hist[i]; if(cum>=target){thr=i; break;} }
+  const out = new Uint8ClampedArray(arr.length);
+  for(let i=0;i<arr.length;i++) out[i] = invert ? (arr[i] < thr ? 255 : 0) : (arr[i] > thr ? 255 : 0);
+  return {bin: out, width, height};
+}
+
+function thresholdOtsu(gray, invert=true){
+  const {arr, width, height} = gray;
+  const hist = new Float64Array(256);
+  for(let v of arr) hist[v]++;
+  const total = width*height;
+  let sum=0;
+  for(let i=0;i<256;i++) sum += i*hist[i];
+  let sumB=0,wB=0,wF=0,maxVar=0,thr=0;
+  for(let t=0;t<256;t++){
+    wB += hist[t];
+    if(wB===0) continue;
+    wF = total - wB;
+    if(wF===0) break;
+    sumB += t*hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB)/wF;
+    const between = wB*wF*(mB - mF)*(mB - mF);
+    if(between > maxVar){ maxVar=between; thr=t; }
+  }
+  const out = new Uint8ClampedArray(arr.length);
+  for(let i=0;i<arr.length;i++) out[i] = invert ? (arr[i] < thr ? 255 : 0) : (arr[i] > thr ? 255 : 0);
+  return {bin: out, width, height, thr};
+}
+
+function erode(bin, w, h, r=1){
+  if(r<=0) return bin.slice();
+  const out = new Uint8ClampedArray(bin.length);
+  const rr = r|0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let ok=255;
+      for(let dy=-rr; dy<=rr; dy++){
+        for(let dx=-rr; dx<=rr; dx++){
+          const nx=x+dx, ny=y+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h){ok=0;break;}
+          if(bin[ny*w+nx]===0){ok=0;break;}
+        }
+        if(ok===0) break;
+      }
+      out[y*w+x] = ok?255:0;
+    }
+  }
+  return out;
+}
+
+function dilate(bin, w, h, r=1){
+  if(r<=0) return bin.slice();
+  const out = new Uint8ClampedArray(bin.length);
+  const rr = r|0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let on=0;
+      for(let dy=-rr; dy<=rr; dy++){
+        for(let dx=-rr; dx<=rr; dx++){
+          const nx=x+dx, ny=y+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h) continue;
+          if(bin[ny*w+nx]===255){on=1;break;}
+        }
+        if(on) break;
+      }
+      out[y*w+x] = on?255:0;
+    }
+  }
+  return out;
+}
+
+function connectedComponents(bin, w, h){
+  const labels = new Int32Array(w*h).fill(-1);
+  const comps = [];
+  let id=0;
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const idx = y*w+x;
+      if(bin[idx]!==255 || labels[idx]!==-1) continue;
+      let qx=[x], qy=[y], qi=0;
+      labels[idx]=id;
+      let area=0, minx=x, maxx=x, miny=y, maxy=y;
+      let touchesEdge=false;
+      while(qi<qx.length){
+        const cx=qx[qi], cy=qy[qi]; qi++;
+        area++;
+        if(cx===0||cy===0||cx===w-1||cy===h-1) touchesEdge=true;
+        minx=Math.min(minx,cx); maxx=Math.max(maxx,cx);
+        miny=Math.min(miny,cy); maxy=Math.max(maxy,cy);
+        for(const [dx,dy] of dirs){
+          const nx=cx+dx, ny=cy+dy;
+          if(nx<0||ny<0||nx>=w||ny>=h) continue;
+          const nidx=ny*w+nx;
+          if(bin[nidx]===255 && labels[nidx]===-1){
+            labels[nidx]=id;
+            qx.push(nx); qy.push(ny);
+          }
+        }
+      }
+      comps.push({id, area, minx, miny, maxx, maxy, touchesEdge});
+      id++;
+    }
+  }
+  return {labels, comps};
+}
+
+function percentile(arr, p){
+  if(arr.length===0) return NaN;
+  const i = (arr.length-1)*(p/100);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  if (lo===hi) return arr[lo];
+  return arr[lo] + (arr[hi]-arr[lo])*(i-lo);
+}
+
+function drawHistogram(values){
+  const w=histCanvas.width, h=histCanvas.height;
+  hctx.clearRect(0,0,w,h);
+  if(!values.length){ 
+    hctx.fillStyle="#567";
+    hctx.fillText("Sin datos…",10,20);
+    return;
+  }
+  const bins = 30;
+  const min = Math.min(...values), max = Math.max(...values);
+  const bw = w/bins;
+  const counts = new Array(bins).fill(0);
+  const range = (max-min)||1;
+  values.forEach(v=>{
+    let b = Math.floor((v-min)/range*bins);
+    if(b>=bins) b=bins-1;
+    counts[b]++;
+  });
+  const maxC = Math.max(...counts)||1;
+  hctx.fillStyle="#2b90d9";
+  for(let i=0;i<bins;i++){
+    const ch = (counts[i]/maxC)*(h-20);
+    hctx.fillRect(i*bw, h-ch, bw-1, ch);
+  }
+  hctx.fillStyle="#9fb3c8";
+  hctx.fillText(`min ${min.toFixed(0)}μm  max ${max.toFixed(0)}μm`, 8, 14);
+}
+
+// ===== File upload helper =====
+function hookFileInput(inputEl, infoEl, progressEl, barEl, onImageLoaded){
+  inputEl.addEventListener("change", (e)=>{
+    const f = inputEl.files?.[0];
+    if(!f) return;
+    infoEl.textContent = `${f.name} • ${fmtBytes(f.size)}`;
+    progressEl.classList.remove("hidden");
+    barEl.style.width = "0%";
+    const fr = new FileReader();
+    fr.onprogress = (ev)=>{
+      if(ev.lengthComputable){
+        const pct = (ev.loaded/ev.total)*100;
+        barEl.style.width = `${pct}%`;
+      }
+    };
+    fr.onload = ()=>{
+      barEl.style.width = "100%";
+      setTimeout(()=>progressEl.classList.add("hidden"), 400);
+      const img = new Image();
+      img.onload = ()=>{
+        onImageLoaded(img);
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(f);
+  });
+}
+
+// ===== Calibration (same as before, with ROI) =====
+let sel = null;
+let selecting = false;
+
+function enableRulerSelection(canvas){
+  sel = null;
+  const rectEl = document.createElement("div");
+  rectEl.className = "selectRect";
+  canvas.parentElement.appendChild(rectEl);
+  function setRect(a,b){
+    const x = Math.min(a.x,b.x), y = Math.min(a.y,b.y);
+    const w = Math.abs(a.x-b.x), h = Math.abs(a.y-b.y);
+    rectEl.style.left = (canvas.offsetLeft + x + 8) + "px";
+    rectEl.style.top = (canvas.offsetTop + y + 8) + "px";
+    rectEl.style.width = w + "px";
+    rectEl.style.height = h + "px";
+  }
+  let start=null;
+  canvas.onmousedown = (ev)=>{
+    const bb = canvas.getBoundingClientRect();
+    start = {x: ev.clientX - bb.left, y: ev.clientY - bb.top};
+    selecting = true;
+  };
+  canvas.onmousemove = (ev)=>{
+    if(!selecting) return;
+    const bb = canvas.getBoundingClientRect();
+    const cur = {x: ev.clientX - bb.left, y: ev.clientY - bb.top};
+    setRect(start, cur);
+  };
+  canvas.onmouseup = (ev)=>{
+    selecting=false;
+    const bb = canvas.getBoundingClientRect();
+    const end = {x: ev.clientX - bb.left, y: ev.clientY - bb.top};
+    const x = Math.round(Math.min(start.x,end.x));
+    const y = Math.round(Math.min(start.y,end.y));
+    const w = Math.round(Math.abs(start.x-end.x));
+    const h = Math.round(Math.abs(start.y-end.y));
+    if(w>10 && h>10){
+      sel = {x,y,w,h};
+      rctx.save();
+      rctx.strokeStyle = "#ffd166";
+      rctx.lineWidth = 2;
+      rctx.strokeRect(x,y,w,h);
+      rctx.restore();
+    }
+  };
+}
+
+hookFileInput($("rulerInput"), $("rulerInfo"), $("rulerProgress"), $("rulerBar"), (img)=>{
+  rulerImg = img;
+  drawImageToCanvas(img, rulerCanvas);
+  enableRulerSelection(rulerCanvas);
+});
+
+$("autoCalBtn").onclick = ()=>{
+  if(!rulerCanvas.width){ alert("Sube una foto de la regla primero."); return; }
+  const roi = sel || {x: 0, y: Math.floor(rulerCanvas.height*0.2), w: rulerCanvas.width, h: Math.floor(rulerCanvas.height*0.6)};
+  const img = rctx.getImageData(roi.x, roi.y, roi.w, roi.h);
+  const gray = toGray(img);
+  const thr = thresholdPercentile(gray, 50);
+  const sums = new Float32Array(roi.w);
+  for(let x=0;x<roi.w;x++){
+    let s=0;
+    for(let y=0;y<roi.h;y++){
+      if(thr.bin[y*roi.w+x]===0) continue;
+      s += 1;
+    }
+    sums[x]=s;
+  }
+  const win=3;
+  const smooth = new Float32Array(roi.w);
+  for(let i=0;i<roi.w;i++){
+    let a=0,c=0;
+    for(let k=-win;k<=win;k++){
+      const j=i+k; if(j<0||j>=roi.w) continue;
+      a+=sums[j]; c++;
+    }
+    smooth[i]=a/Math.max(c,1);
+  }
+  const peaks=[];
+  const t2 = (Math.max(...smooth))*0.5;
+  for(let i=1;i<roi.w-1;i++){
+    if(smooth[i]>t2 && smooth[i]>smooth[i-1] && smooth[i]>smooth[i+1]){
+      peaks.push(i);
+    }
+  }
+  if(peaks.length<5){
+    alert("No se detectaron suficientes marcas. Prueba otra zona o usa Manual.");
+    return;
+  }
+  const diffs=[];
+  for(let i=1;i<peaks.length;i++) diffs.push(peaks[i]-peaks[i-1]);
+  const hist = {};
+  for(const d of diffs){ if(d>=3 && d<=60) hist[d]=(hist[d]||0)+1; }
+  let bestD=null, bestC=0;
+  for(const k in hist){ if(hist[k]>bestC){ bestC=hist[k]; bestD=Number(k); } }
+  if(!bestD){ alert("No pude estimar 1 mm. Usa Manual 0–1 cm."); return; }
+  pxPerMM = bestD;
+  calibrationSource = `Auto (ROI ${roi.w}×${roi.h}px)`;
+  updateCalUI();
+};
+
+let manualMode=false;
+$("manualCalBtn").onclick = ()=>{
+  if(!rulerCanvas.width){ alert("Sube una foto de la regla primero."); return; }
+  manualMode = true;
+  alert("Haz click en 0 cm y luego en 1 cm.");
+};
+rulerCanvas.addEventListener("click",(ev)=>{
+  if(!manualMode) return;
+  const bb = rulerCanvas.getBoundingClientRect();
+  const x = ev.clientX - bb.left;
+  const y = ev.clientY - bb.top;
+  if(!window._mpts) window._mpts = [];
+  window._mpts.push({x,y});
+  rctx.fillStyle="#19a974";
+  rctx.beginPath(); rctx.arc(x,y,4,0,Math.PI*2); rctx.fill();
+  if(window._mpts.length===2){
+    const a=window._mpts[0], b=window._mpts[1];
+    const dist = Math.hypot(b.x-a.x, b.y-a.y);
+    pxPerMM = dist/10.0;
+    calibrationSource = "Manual 0–1 cm";
+    manualMode=false; window._mpts=[];
+    updateCalUI();
+  }
+});
+
+function updateCalUI(){
+  $("pxPerMM").textContent = pxPerMM ? pxPerMM.toFixed(3) : "—";
+  $("mmPerPx").textContent = pxPerMM ? (1/pxPerMM).toFixed(5) : "—";
+  $("calSource").textContent = calibrationSource;
+}
+$("saveCalBtn").onclick = ()=>{
+  if(!pxPerMM){ alert("Aún no hay calibración."); return; }
+  const payload = { pxPerMM, source: calibrationSource, at: new Date().toISOString() };
+  localStorage.setItem("grindCalV2", JSON.stringify(payload));
+  $("calSaved").textContent = new Date(payload.at).toLocaleString();
+};
+$("clearCalBtn").onclick = ()=>{
+  localStorage.removeItem("grindCalV2");
+  $("calSaved").textContent = "—";
+  pxPerMM = null; updateCalUI();
+};
+(function(){
+  const saved = localStorage.getItem("grindCalV2");
+  if(saved){
+    try{ const j=JSON.parse(saved);
+      pxPerMM=j.pxPerMM; calibrationSource=j.source||"Guardado";
+      $("calSaved").textContent = new Date(j.at).toLocaleString();
+      updateCalUI();
+    }catch(e){}
+  }
+})();
+
+// ===== Grind image: zoom/pan & ROI selection =====
+let view = {scale:1, tx:0, ty:0};
+let navMode = false;
+let dragging = false;
+let dragStart = {x:0,y:0};
+let rois = []; // in image coords
+let drawingRoi = false;
+let roiStart = null;
+
+$("enableNav").onclick = ()=>{ navMode = !navMode; $("enableNav").classList.toggle("alt", !navMode); };
+$("resetView").onclick = ()=>{ view={scale:1,tx:0,ty:0}; redrawGrind(); };
+$("addRoi").onclick = ()=>{ drawingRoi = true; };
+$("clearRois").onclick = ()=>{ rois=[]; redrawGrind(); updateRoiInfo(); };
+
+function screenToImage(x,y){
+  const ix = (x - view.tx)/view.scale;
+  const iy = (y - view.ty)/view.scale;
+  return {x: ix, y: iy};
+}
+
+function clampRoi(r){
+  const W = baseCanvas.width, H = baseCanvas.height;
+  const x = Math.max(0, Math.min(W-1, r.x));
+  const y = Math.max(0, Math.min(H-1, r.y));
+  const w = Math.max(1, Math.min(W-x, r.w));
+  const h = Math.max(1, Math.min(H-y, r.h));
+  return {x,y,w,h};
+}
+
+function redrawGrind(overlays=[]){
+  const ctx = gctx;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,grindCanvas.width,grindCanvas.height);
+  ctx.setTransform(view.scale,0,0,view.scale,view.tx,view.ty);
+  ctx.drawImage(baseCanvas, 0,0);
+
+  // draw ROIs
+  ctx.save();
+  ctx.strokeStyle="#ffd166"; ctx.lineWidth=2/view.scale;
+  ctx.fillStyle="rgba(255,209,102,0.12)";
+  rois.forEach(r=>{
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+  });
+  ctx.restore();
+
+  // draw overlays (circles) in image coords
+  ctx.save();
+  ctx.strokeStyle="#ffd166"; ctx.lineWidth=1.5/view.scale;
+  ctx.fillStyle="rgba(255,209,102,0.15)";
+  for(const o of overlays){
+    ctx.beginPath();
+    ctx.ellipse(o.cx, o.cy, o.r, o.r, 0, 0, Math.PI*2);
+    ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+grindCanvas.addEventListener("mousedown",(ev)=>{
+  const bb = grindCanvas.getBoundingClientRect();
+  const sx = ev.clientX - bb.left, sy = ev.clientY - bb.top;
+  if(navMode){
+    dragging = true; dragStart={x:sx,y:sy};
+  }else if(drawingRoi){
+    roiStart = screenToImage(sx, sy);
+  }
+});
+grindCanvas.addEventListener("mousemove",(ev)=>{
+  const bb = grindCanvas.getBoundingClientRect();
+  const sx = ev.clientX - bb.left, sy = ev.clientY - bb.top;
+  if(navMode && dragging){
+    view.tx += (sx - dragStart.x);
+    view.ty += (sy - dragStart.y);
+    dragStart={x:sx,y:sy};
+    redrawGrind();
+  }else if(drawingRoi && roiStart){
+    const cur = screenToImage(sx, sy);
+    const r = clampRoi({x: Math.min(roiStart.x, cur.x), y: Math.min(roiStart.y, cur.y),
+                        w: Math.abs(cur.x - roiStart.x), h: Math.abs(cur.y - roiStart.y)});
+    // temporary draw
+    redrawGrind();
+    const ctx = gctx;
+    ctx.save();
+    ctx.setTransform(view.scale,0,0,view.scale,view.ty,view.ty);
+    ctx.restore();
+    ctx.save();
+    ctx.setTransform(view.scale,0,0,view.scale,view.tx,view.ty);
+    ctx.strokeStyle="#00e5ff"; ctx.lineWidth=2/view.scale;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.restore();
+  }
+});
+grindCanvas.addEventListener("mouseup",(ev)=>{
+  const bb = grindCanvas.getBoundingClientRect();
+  const sx = ev.clientX - bb.left, sy = ev.clientY - bb.top;
+  if(navMode){ dragging=false; return; }
+  if(drawingRoi && roiStart){
+    const cur = screenToImage(sx, sy);
+    let r = clampRoi({x: Math.min(roiStart.x, cur.x), y: Math.min(roiStart.y, cur.y),
+                      w: Math.abs(cur.x - roiStart.x), h: Math.abs(cur.y - roiStart.y)});
+    if(r.w>5 && r.h>5) rois.push(r);
+    drawingRoi=false; roiStart=null;
+    redrawGrind(); updateRoiInfo();
+  }
+});
+grindCanvas.addEventListener("wheel",(ev)=>{
+  if(!navMode) return;
+  ev.preventDefault();
+  const bb = grindCanvas.getBoundingClientRect();
+  const sx = ev.clientX - bb.left, sy = ev.clientY - bb.top;
+  const imgPt = screenToImage(sx, sy);
+  const scaleFactor = (ev.deltaY<0) ? 1.1 : 0.9;
+  view.scale *= scaleFactor;
+  // keep point under cursor fixed
+  view.tx = sx - imgPt.x*view.scale;
+  view.ty = sy - imgPt.y*view.scale;
+  redrawGrind();
+},{passive:false});
+
+function updateRoiInfo(){
+  if(rois.length===0){ $("roiInfo").textContent = "—"; return; }
+  let s = rois.map((r,i)=>`${i+1}: ${r.w}×${r.h}px`).join(" | ");
+  if(pxPerMM){
+    const mmInfo = rois.map(r=>`${(r.w/pxPerMM).toFixed(2)}×${(r.h/pxPerMM).toFixed(2)} mm`).join(" | ");
+    s += `  (${mmInfo})`;
+  }
+  $("roiInfo").textContent = s;
+}
+
+// Load grind image
+hookFileInput($("grindInput"), $("grindInfo"), $("grindProgress"), $("grindBar"), (img)=>{
+  grindImg = img;
+  // normalize to a comfortable working size (no transform here)
+  const maxW=1200, maxH=900;
+  const ratio = Math.min(maxW/img.width, maxH/img.height, 1);
+  baseCanvas.width = Math.round(img.width*ratio);
+  baseCanvas.height = Math.round(img.height*ratio);
+  bctx.setTransform(1,0,0,1,0,0);
+  bctx.clearRect(0,0,baseCanvas.width,baseCanvas.height);
+  bctx.drawImage(img, 0,0, baseCanvas.width, baseCanvas.height);
+
+  // draw in visible canvas using current view
+  grindCanvas.width = baseCanvas.width;
+  grindCanvas.height = baseCanvas.height;
+  view = {scale:1, tx:0, ty:0};
+  rois=[];
+  redrawGrind();
+  updateRoiInfo();
+});
+
+// ===== Analysis =====
+$("thr").oninput = (e)=>{ $("thrVal").textContent = e.target.value; };
+$("sepa").oninput = (e)=>{ $("sepaVal").textContent = e.target.value; };
+$("minArea").oninput = (e)=>{ $("minAreaVal").textContent = e.target.value; };
+
+$("analyzeBtn").onclick = ()=>{
+  if(!baseCanvas.width){ alert("Sube la foto de la molienda."); return; }
+  if(!pxPerMM){
+    const saved = localStorage.getItem("grindCalV2");
+    if(saved){ 
+      const j = JSON.parse(saved);
+      pxPerMM = j.pxPerMM; calibrationSource = j.source||"Guardado";
+      $("calSaved").textContent = new Date(j.at).toLocaleString();
+      updateCalUI();
+    }
+  }
+  if(!pxPerMM){ alert("Falta la calibración (paso 1)."); return; }
+
+  const thrP = Number($("thr").value);
+  const sepa = Number($("sepa").value);
+  const minArea = Number($("minArea").value);
+  const method = $("thrMethod").value;
+  const ignoreEdges = $("ignoreEdges").checked;
+
+  // If no rois, use full image
+  const targets = rois.length? rois : [{x:0,y:0,w:baseCanvas.width,h:baseCanvas.height}];
+
+  const px2um = (1000/pxPerMM);
+  const allDiam = [];
+  const overlays = [];
+
+  for(const R of targets){
+    const img = bctx.getImageData(R.x, R.y, R.w, R.h);
+    const gray = toGray(img, "lum");
+    const bw = (method==="otsu") ? thresholdOtsu(gray,true) : thresholdPercentile(gray, thrP, true);
+    let bin = bw.bin;
+    if(sepa>0){
+      bin = erode(bin, R.w, R.h, sepa);
+      bin = dilate(bin, R.w, R.h, sepa);
+    }
+    const {labels, comps} = connectedComponents(bin, R.w, R.h);
+    for(const c of comps){
+      if(c.area < minArea) continue;
+      if(ignoreEdges && c.touchesEdge) continue;
+      const d_px = 2*Math.sqrt(c.area/Math.PI);
+      const d_um = d_px * px2um;
+      allDiam.push(d_um);
+      // center in full-image coords
+      const cx = R.x + (c.minx + c.maxx)/2;
+      const cy = R.y + (c.miny + c.maxy)/2;
+      overlays.push({cx, cy, r: d_px/2});
+    }
+  }
+
+  allDiam.sort((a,b)=>a-b);
+  const d10 = percentile(allDiam,10);
+  const d50 = percentile(allDiam,50);
+  const d90 = percentile(allDiam,90);
+  const mean = allDiam.reduce((a,b)=>a+b,0)/Math.max(allDiam.length,1);
+
+  $("d10").textContent = isFinite(d10)? d10.toFixed(0):"—";
+  $("d50").textContent = isFinite(d50)? d50.toFixed(0):"—";
+  $("d90").textContent = isFinite(d90)? d90.toFixed(0):"—";
+  $("mean").textContent = isFinite(mean)? mean.toFixed(0):"—";
+  $("count").textContent = allDiam.length;
+
+  drawHistogram(allDiam);
+  window._lastDiameters = allDiam;
+  window._lastOverlays = overlays;
+
+  redrawGrind(overlays);
+};
+
+$("exportCsvBtn").onclick = ()=>{
+  if(!window._lastDiameters?.length){ alert("No hay resultados."); return; }
+  const rows = ["diameter_um"];
+  window._lastDiameters.forEach(v=>rows.push(v.toFixed(2)));
+  const blob = new Blob([rows.join("\n")], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "grind_diameters_um.csv";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+};
+
+$("savePngBtn").onclick = ()=>{
+  if(!baseCanvas.width){ alert("Sube la foto y calcula primero."); return; }
+  // compose base + ROI + overlay into temp canvas
+  const tmp = document.createElement("canvas");
+  tmp.width = baseCanvas.width; tmp.height = baseCanvas.height;
+  const tctx = tmp.getContext("2d");
+  tctx.drawImage(baseCanvas,0,0);
+  // draw overlays and rois
+  tctx.save();
+  tctx.strokeStyle="#ffd166"; tctx.lineWidth=2; tctx.fillStyle="rgba(255,209,102,0.12)";
+  rois.forEach(r=>{ tctx.fillRect(r.x,r.y,r.w,r.h); tctx.strokeRect(r.x,r.y,r.w,r.h); });
+  tctx.restore();
+  if(window._lastOverlays){
+    tctx.save();
+    tctx.strokeStyle="#ffd166"; tctx.lineWidth=1.5; tctx.fillStyle="rgba(255,209,102,0.15)";
+    for(const o of window._lastOverlays){
+      tctx.beginPath(); tctx.ellipse(o.cx,o.cy,o.r,o.r,0,0,Math.PI*2);
+      tctx.fill(); tctx.stroke();
+    }
+    tctx.restore();
+  }
+  const a = document.createElement("a");
+  a.href = tmp.toDataURL("image/png"); a.download = "grind_annotated.png"; a.click();
+};
+</script>
+</body>
+</html>
