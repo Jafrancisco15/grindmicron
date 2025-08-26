@@ -157,26 +157,7 @@ export default function GrindAnalyzer() {
           <div className="flex-1">
             <label className="label">Sube una foto de la molienda (fondo claro mate, buena luz)</label>
             <input type="file" accept="image/*" onChange={onFileChange} className="input w-full"/>
-            <div className="relative inline-block mt-3 w-full rounded-xl">
-  <canvas ref={canvasRef} onWheel={onWheel} className="w-full rounded-xl border border-white/10" />
-  <canvas ref={overlayRef} onWheel={onWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
-          className="absolute inset-0 w-full h-full pointer-events-auto" />
-</div>
-            <div className="flex flex-wrap gap-2 items-center mt-2">
-              <button className="btn btn-secondary" onClick={resetView}>Reiniciar vista</button>
-              <button className={"btn " + (roiMode ? "btn-primary" : "btn-secondary")} onClick={()=>setRoiMode(!roiMode)}>
-                {roiMode ? "ROI: Dibujar" : "ROI: Panear"}
-              </button>
-              <button className="btn btn-secondary" onClick={clearRois}>Limpiar ROIs</button>
-              <label className="inline-flex items-center gap-2 ml-2">
-                <input type="checkbox" checked={params.roiOnly} onChange={e=>setParams({...params, roiOnly: e.target.checked})}/>
-                Analizar solo ROIs
-              </label>
-              <label className="inline-flex items-center gap-2 ml-2">
-                <input type="checkbox" checked={params.splitClumps} onChange={e=>setParams({...params, splitClumps: e.target.checked})}/>
-                Separar grumos (experimental)
-              </label>
-            </div>
+            <canvas ref={canvasRef} className="mt-3 w-full rounded-xl border border-white/10" />
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
               <div>
                 <div className="label">Calibración</div>

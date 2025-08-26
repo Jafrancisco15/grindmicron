@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Calibration, loadCalibrations, saveCalibrations } from "../lib/storage";
+import { PHONE_SPECS, PhoneSpec } from "../lib/phoneDB";
+import { estimateMicronsPerPixel, listBrands, listModels } from "../lib/cameraCalibration";
+
 
 type Props = {
   onCalibrated?: (cal: Calibration) => void;
@@ -8,48 +11,17 @@ type Props = {
 export default function CalibrationCanvas({ onCalibrated }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({x:0, y:0});
-  const [isPanning, setIsPanning] = useState(false);
-  const panRef = useRef<{x:number,y:number}|null>(null);
-
-  function viewToImage(pt:{x:number,y:number}){
-    const x = (pt.x - offset.x)/scale;
-    const y = (pt.y - offset.y)/scale;
-    return {x,y};
-  }
-  function imageToView(pt:{x:number,y:number}){
-    return {x: pt.x*scale + offset.x, y: pt.y*scale + offset.y};
-  }
-
-  function onWheel(e: React.WheelEvent<HTMLCanvasElement>) {
-    if (!canvasRef.current) return;
-    e.preventDefault();
-    const rect = (overlayRef.current ?? canvasRef.current).getBoundingClientRect();
-    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
-    const before = viewToImage(mouse);
-    const dir = Math.sign(e.deltaY) > 0 ? -1 : 1;
-    const factor = 1 + 0.15 * dir;
-    const newScale = Math.min(12, Math.max(0.2, scale * factor));
-    setScale(newScale);
-    const after = {x: before.x * newScale, y: before.y * newScale};
-    setOffset({x: mouse.x - after.x, y: mouse.y - after.y});
-  }
-  function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>){
-    const rect = (overlayRef.current ?? canvasRef.current).getBoundingClientRect();
-    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
-    setIsPanning(true);
-    panRef.current = {x: mouse.x - offset.x, y: mouse.y - offset.y};
-  }
-  function onMouseMove(e: React.MouseEvent<HTMLCanvasElement>){
-    if (!isPanning || !panRef.current) return;
-    const rect = (overlayRef.current ?? canvasRef.current).getBoundingClientRect();
-    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
-    setOffset({x: mouse.x - panRef.current.x, y: mouse.y - panRef.current.y});
-  }
-  function onMouseUp(){ setIsPanning(false); panRef.current = null; }
-  function resetView(){ setScale(1); setOffset({x:0,y:0}); }
+  // --- Calibración por teléfono/EXIF ---
+  const [brand, setBrand] = useState<string>('Apple');
+  const [modelIdx, setModelIdx] = useState<number>(0);
+  const [lensIdx, setLensIdx] = useState<number>(0);
+  const [distanceCM, setDistanceCM] = useState<number>(20);
+  const [exifInfo, setExifInfo] = useState<any>(null);
+  const [autoMicron, setAutoMicron] = useState<number | null>(null);
+  const brands = listBrands();
+  const models = listModels(brand);
+  const selected = models[modelIdx] ?? null;
+  const lens = selected?.lenses?.[lensIdx] ?? null;
 const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [pts, setPts] = useState<{x:number,y:number}[]>([]);
   const [mm, setMM] = useState<number>(10);
@@ -133,16 +105,44 @@ const [img, setImg] = useState<HTMLImageElement | null>(null);
   }
 
   
-  function onOverlayClick(e: React.MouseEvent<HTMLCanvasElement>){
-    if (!overlayRef.current) return;
-    const rect = overlayRef.current.getBoundingClientRect();
-    const mouse = {x: e.clientX - rect.left, y: e.clientY - rect.top};
-    const imgPt = viewToImage(mouse);
-    setPts(prev => {
-      const next = [...prev, {x: imgPt.x, y: imgPt.y}];
-      if (next.length > 2) return next.slice(-2);
-      return next;
-    });
+  async function autoCalibrate() {
+    if (!img) { alert("Sube primero la foto (puede ser la misma de la molienda)."); return; }
+    try {
+      // Try to reconstruct a File from the <input>, or use a canvas blob
+      const fileInput = document.querySelector<HTMLInputElement>('#cal-phone-file');
+      let file: File | undefined = undefined;
+      if (fileInput?.files && fileInput.files[0]) file = fileInput.files[0];
+      const res = await estimateMicronsPerPixel({
+        imageEl: img,
+        file,
+        selectedPhone: selected ?? undefined,
+        selectedLens: lens ?? null,
+        distanceMM: distanceCM*10
+      });
+      setAutoMicron(res.micronsPerPixel);
+      setExifInfo(res);
+    } catch (e:any) {
+      console.error(e);
+      alert("No fue posible leer EXIF; usa los selectores de teléfono y la distancia.");
+    }
+  }
+
+  function saveAutoCal() {
+    if (!autoMicron) { alert("Primero genera la calibración automática."); return; }
+    const list = loadCalibrations();
+    const cal: Calibration = {
+      id: crypto.randomUUID(),
+      name: name || (selected ? `${selected.brand} ${selected.model}` : "Calibración por teléfono"),
+      dateISO: new Date().toISOString(),
+      micronsPerPixel: autoMicron,
+      pixelDistance: img?.naturalWidth || 0,
+      realDistanceMM: ((img?.naturalWidth || 0) * autoMicron) / 1000,
+      notes
+    };
+    list.unshift(cal);
+    saveCalibrations(list);
+    onCalibrated?.(cal);
+    alert("Calibración guardada.");
   }
 return (
     <div className="space-y-4">
@@ -151,17 +151,56 @@ return (
           <div className="flex-1">
             <label className="label">Sube una foto de una regla (misma distancia y zoom que usarás para la molienda)</label>
             <input type="file" accept="image/*" onChange={onFileChange} className="input w-full"/>
-<div className="flex gap-2 mt-2">
-  <button className="btn btn-secondary" onClick={resetView}>Reiniciar vista</button>
-  <span className="text-xs text-neutral-400 self-center">Usa rueda del mouse para zoom, arrastra para pan</span>
-</div>
             <p className="mt-2 text-sm text-neutral-400">Haz clic en dos marcas conocidas (por ejemplo, 0 cm y 1 cm), luego introduce la distancia real.</p>
-            <div className="relative mt-3 w-full rounded-xl">
-  <canvas ref={canvasRef} onWheel={onWheel} className="w-full rounded-xl border border-white/10" />
-  <canvas ref={overlayRef} onWheel={onWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
-          className="absolute inset-0 w-full h-full pointer-events-auto" onClick={onOverlayClick} />
-</div>
+            <canvas ref={canvasRef} className="mt-3 w-full rounded-xl border border-white/10" onClick={onClick}/>
           </div>
+          
+      <div className="card-2 mt-6">
+        <div className="label mb-2">Calibración por teléfono / EXIF (beta)</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <div className="label mb-1">Sube la misma foto (para leer EXIF, opcional)</div>
+            <input id="cal-phone-file" type="file" accept="image/*" onChange={onFileChange} className="input w-full"/>
+            <div className="text-xs text-neutral-400 mt-1">Si EXIF no está disponible, puedes elegir teléfono y lente y estimar con una <b>distancia</b>.</div>
+          </div>
+          <div>
+            <div className="label mb-1">Marca y modelo</div>
+            <div className="flex gap-2">
+              <select className="input w-1/2" value={brand} onChange={e=>{setBrand(e.target.value); setModelIdx(0); setLensIdx(0);}}>
+                {brands.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              <select className="input w-1/2" value={modelIdx} onChange={e=>{setModelIdx(parseInt(e.target.value)); setLensIdx(0);}}>
+                {models.map((m, i) => <option key={m.model} value={i}>{m.model}</option>)}
+              </select>
+            </div>
+            <div className="mt-2">
+              <div className="label mb-1">Lente</div>
+              <select className="input w-full" value={lensIdx} onChange={e=>setLensIdx(parseInt(e.target.value))}>
+                {selected?.lenses?.map((l, i) => <option key={l.name} value={i}>{l.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <div className="label mb-1">Distancia aproximada a la molienda</div>
+            <div className="flex items-center gap-2">
+              <input type="range" min={5} max={40} value={distanceCM} onChange={e=>setDistanceCM(parseInt(e.target.value))} className="w-full"/>
+              <div className="w-16 text-right">{distanceCM} cm</div>
+            </div>
+            <button onClick={autoCalibrate} className="btn btn-secondary w-full mt-2">Estimar micras/pixel</button>
+          </div>
+        </div>
+        {autoMicron && (
+          <div className="mt-3 p-3 rounded-xl border border-white/10 bg-white/5 text-sm">
+            <div><b>Resultado</b>: ~{autoMicron.toFixed(2)} μm/pixel</div>
+            {exifInfo?.focalMM && <div>Focal: {exifInfo.focalMM?.toFixed(2)} mm</div>}
+            {exifInfo?.equiv35MM && <div>Equivalente 35mm: {exifInfo.equiv35MM} mm</div>}
+            {exifInfo?.distanceMM && <div>Distancia usada: {(exifInfo.distanceMM/10).toFixed(1)} cm</div>}
+            <div className="text-xs text-neutral-400 mt-1">* Este método depende de EXIF/ distancia; para mayor precisión, usa la calibración de dos puntos con regla.</div>
+            <button onClick={saveAutoCal} className="btn btn-primary w-full mt-2">Guardar calibración</button>
+          </div>
+        )}
+      </div>
+
           <div className="w-full md:w-80 card-2">
             <div className="space-y-3">
               <div>
